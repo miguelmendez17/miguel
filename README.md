@@ -1,2 +1,1 @@
-# droneees
-Upgrade dependencies first
+# safewrd_drone
