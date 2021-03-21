@@ -28,7 +28,7 @@ body = json.dumps({'event_type':'find',
 #                    'stream_url':'"rtmp://90.1.34.1:8711/live'})
 
 headers = {'content-type':'application/json'}
-print post('http://localhost:8888/start_new_session', data = body, headers=headers).content
+print(post('http://localhost:8888/start_new_session', data = body, headers=headers).content)
 
 
 # body1 = json.dumps({'session_id': 'S0015166258190634'})

@@ -1,32 +1,24 @@
-#!/usr/bin/env python2.7
-
 """
 FLYTBASE INC grants Customer a perpetual, non-exclusive, royalty-free license to use this software.
  All copyrights, patent rights, and other intellectual property rights for this software are retained by FLYTBASE INC.
 """
-
-
-
-from functools import partial
-
 import operator
+
+from redis import Redis, StrictRedis
 from tornado import gen
-from toredis import Client as RedisClient
-from tornado.web import Application, RequestHandler, asynchronous
+from tornado.web import Application, RequestHandler
 import sys
 from tornado import ioloop
 import json
 import time
 import requests
-
 from helper import WebSocketClient, dist_bet_coordinates, DroneRemoteAccess
 from session import SessionHandler
 
-### Initialize redis client
-redis_main = RedisClient()
-redis_main.connect('localhost')
+# Initialize redis client
+redis_main = StrictRedis(host='localhost')
 
-### set parameters
+# set parameters
 drone_status_update_rate = 4000  # data will be updated every T mili seconds.
 sub_topics = ["gpos", "lpos", 'imu', "battery"]  # topics to be subscribed
 
@@ -87,47 +79,6 @@ def confirm_drones(drone_list):
     return liveDrones
 
 
-# @gen.engine
-# def get_drone_status(list_of_drones):
-#     """
-#     Use list of vehicles and per drone keys to fetch current drone status.
-#     On it's first successful execution (for first drone) set the app ready flag.
-#     :return:
-#     """
-#     drone_list = list_of_drones
-#     for drone in drone_list:
-#         # fetch recent updates.
-#         gpos = yield gen.Task(redis_main.get, drone + '_gpos')
-#         lpos = yield gen.Task(redis_main.get, drone + '_lpos')
-#         batt = yield gen.Task(redis_main.get, drone + '_batt')
-#         # update each drones info topic.
-#         try:
-#             gpos = json.loads(gpos)
-#             lpos = json.loads(lpos)
-#             batt = json.loads(batt)
-#             veh_details = drone_list[drone]
-#             updated_state = json.dumps(
-#                 {"state": {"lat": gpos['lat'], "long": gpos['long'], "alt": lpos['z'],
-#                            "yaw": lpos['yaw'], "bat": batt['percent']},
-#                  "status": veh_details['status'], "ns": veh_details['ns'], "name": veh_details['name']})
-#             yield gen.Task(redis_main.set, drone + '_info', updated_state)
-#
-#             # update app status
-#             app_status = yield gen.Task(redis_main.get, "app_info")
-#             try:
-#                 app_status = json.loads(app_status)
-#                 app_stat = app_status["status"]
-#                 if app_stat == 1:
-#                     yield gen.Task(redis_main.set, "app_info", json.dumps({"status": 0}))
-#                     # todo remove this testing line
-#                     # test_session()
-#             except ValueError:
-#                 print("app status json decode failed"
-#                 # setting up app not running flag.
-#                 yield gen.Task(redis_main.set, "app_info", json.dumps({"status": 2}))
-#         except ValueError:
-#             print("drone json array decode failed"
-
 @gen.coroutine
 def find_available_drone(lat, long):
     """
@@ -174,7 +125,7 @@ def find_available_drone(lat, long):
         raise gen.Return(False)
 
 
-@gen.engine
+@gen.coroutine
 def test_session():
     newSession = SessionHandler('S001', 'abcd123', '6gi14TJq', '84d440b0ba95c19ccd8e56a2cf0e540694798850', 'flytsim',
                                 'SFRD001', {'lat': 37.430289043924745, 'long': -122.08234190940857, 'alt': 10.},
@@ -186,7 +137,7 @@ def test_session():
 
 
 class MainHandler(RequestHandler):
-    @asynchronous
+    @gen.coroutine
     def get(self):
         self.write("Welcome to Drone Manager")
         self.finish()
@@ -221,18 +172,6 @@ class DroneSessionHandler(RequestHandler):
                     # mark the drone as busy even before creating new session.
                     yield gen.Task(redis_main.set, self.droneID + '_status', 1)
 
-                    print("Creating new Session: ", self.session_name, " Drone: ", self.droneID))
-                    self.api_key = yield gen.Task(redis_main.get, self.droneID + '_api_key')
-                    self.ns = yield gen.Task(redis_main.get, self.droneID + '_ns')
-                    self.drone_name = yield gen.Task(redis_main.get, self.droneID + '_name')
-                    newSession = SessionHandler(self.session_name, self.droneID, self.api_key, self.ns, self.drone_name,
-                                                {'lat': self.poi_lat, 'long': self.poi_long, 'alt': self.poi_alt},
-                                                self.poi_alt, self.poi_clearance, self.poi_wait_time, self.stream_url)
-                    newSession.run_mission()
-                    print("SessionManager: Will complete mission in background")
-
-                    self.write(self.session_name)
-                    self.finish()
                 else:
                     self.write("All drones busy, try again later")
                     self.finish()
@@ -252,13 +191,13 @@ class SessionAccessHandler(RequestHandler):
             dataJ = self.request.body.decode("UTF-8")
             try:
                 data = json.loads(dataJ)
-                self.session_id= data['session_id']
+                self.session_id = data['session_id']
                 self.sp_x = data['setpoint']['x']
                 self.sp_y = data['setpoint']['y']
                 self.sp_z = data['setpoint']['z']
                 self.sp_yaw = data['setpoint']['yaw']
                 self.sp_yaw_valid = data['setpoint']['yaw_valid']
-                session_status = yield gen.Task(redis_main.get, self.session_id+'_status')
+                session_status = yield gen.Task(redis_main.get, self.session_id + '_status')
                 # print(session_status
                 if session_status:
                     if session_status == '4':
@@ -266,7 +205,7 @@ class SessionAccessHandler(RequestHandler):
 
                         # gather session and drone information
                         yield gen.Task(redis_main.set, self.session_id + '_status', 100)
-                        session_info_g = yield gen.Task(redis_main.get, self.session_id+'_info')
+                        session_info_g = yield gen.Task(redis_main.get, self.session_id + '_info')
                         session_info = json.loads(session_info_g)
                         self.drone_veh_id = session_info['vehicle_id']
                         self.drone_api_key = session_info['api_key']
@@ -278,8 +217,10 @@ class SessionAccessHandler(RequestHandler):
                         # Submit the request to drone
                         self.ActionController = DroneRemoteAccess(self.drone_veh_id, self.drone_api_key, self.drone_ns)
                         print("RemoteAccess: Got the lock for 10 sec, performing action")
-                        success, resp = yield self.ActionController.attain_local_setpoint(self.sp_x, self.sp_y, self.sp_z,
-                                                                          self.sp_yaw, self.sp_yaw_valid )
+                        success, resp = yield self.ActionController.attain_local_setpoint(self.sp_x, self.sp_y,
+                                                                                          self.sp_z,
+                                                                                          self.sp_yaw,
+                                                                                          self.sp_yaw_valid)
                         if success:
                             print("RemoteAccess: Remote Request success: ", resp)
                         else:
@@ -310,7 +251,7 @@ class SessionAccessHandler(RequestHandler):
 
 
 if __name__ == '__main__':
-    # redis_main.flushall()
+
     redis_main.set("app_info", json.dumps({"status": 2}))  # set app not ready flag.
 
     drone_list = [{'api_key': '84d440b0ba95c19ccd8e56a2cf0e540694798850', 'vehicle_id': '6gi14TJq'},
